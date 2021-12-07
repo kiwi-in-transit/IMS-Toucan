@@ -7,7 +7,7 @@ from typing import List
 
 import torch
 
-from Layers.Attention import MultiHeadedAttention
+from Layers.Attention import MultiHeadedAttention, LinformerPadder
 from Layers.LayerNorm import LayerNorm
 from Layers.MultiSequential import repeat
 from Layers.PositionalEncoding import PositionalEncoding
@@ -51,14 +51,15 @@ class Decoder(BatchScorerInterface, torch.nn.Module):
 
     """
 
-    def __init__(self, odim, self_att_type="multihead_softmax_att", attention_dim=256, attention_heads=4, conv_wshare=4, conv_kernel_length=11,
+    def __init__(self, odim, self_att_type="linformer_att", attention_dim=256, attention_heads=4, conv_wshare=4, conv_kernel_length=11,
                  conv_usebias=False, linear_units=2048, num_blocks=6, dropout_rate=0.1, positional_dropout_rate=0.1, self_attention_dropout_rate=0.0,
                  src_attention_dropout_rate=0.0, input_layer="embed", use_output_layer=True, pos_enc_class=PositionalEncoding, normalize_before=True,
                  concat_after=False, ):
         torch.nn.Module.__init__(self)
 
         self_att_dict = {
-            "multihead_softmax_att": MultiHeadedAttention
+            "multihead_softmax_att": MultiHeadedAttention,
+            "linformer_att": LinformerPadder
             # add more self-attention implementations here
         }
 
