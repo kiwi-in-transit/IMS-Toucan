@@ -326,3 +326,141 @@ class GuidedMultiHeadAttentionLoss(GuidedAttentionLoss):
             self._reset_masks()
 
         return self.alpha * loss
+
+
+class MHLinformer(nn.Module):
+    """
+    Multihead attention, with each head being a Linformer Head
+    input size: max sequence length
+    dim: dimension of each attention head
+    attention_dim: dimension of each actual input feature
+    dim_k: size to project down to
+    nhead: number of attention heads
+    dropout: dropout rate
+    causal_mask: subsequent mask?
+    """
+    def __init__(self, attention_heads, attention_dim, dropout, dim_k, causal_mask=True):
+        super(MHLinformer, self).__init__()
+        self.heads = nn.ModuleList()
+        self.input_size = 625
+        self.dim_k = dim_k
+        self.dim = int(attention_dim/attention_heads)
+        self.attention_dim = attention_dim
+        self.causal_mask = causal_mask
+
+        self.to_q = nn.ModuleList()
+        self.to_k = nn.ModuleList()
+        self.to_v = nn.ModuleList()
+        E_proj = get_EFmatrix(self.input_size, dim_k, matrix="E")
+        # Linformer paper says that we can use a single projection matrix
+        #F_proj = get_EFmatrix(input_size, dim_k, matrix="F")
+
+
+        for _ in range(attention_heads):
+            attn = LinearAttentionHead(self.dim, dropout, E_proj, E_proj, causal_mask=True)
+            self.heads.append(attn)
+            self.to_q.append(nn.Linear(self.attention_dim, self.dim, bias=False))
+            self.to_k.append(nn.Linear(self.attention_dim, self.dim, bias=False))
+            self.to_v.append(nn.Linear(self.attention_dim, self.dim, bias=False))
+        self.w_o = nn.Linear(attention_dim, attention_dim)
+        self.mh_dropout = nn.Dropout(dropout)
+
+    def forward(self, tensor, mask):
+        batch_size, input_len, channels = tensor.shape
+        head_outputs = []
+        for index, head in enumerate(self.heads):
+            Q = self.to_q[index](tensor)
+            K = self.to_k[index](tensor)
+            V = self.to_v[index](tensor)
+            head_outputs.append(head(Q,K,V, mask))
+        out = torch.cat(head_outputs, dim=-1)
+        out = self.w_o(out)
+        out = self.mh_dropout(out)
+        return out
+
+
+class LinearAttentionHead(nn.Module):
+    """
+    Linear attention, as proposed by the linformer paper
+    """
+    def __init__(self, dim, dropout, E_proj, F_proj, causal_mask=True):
+        super(LinearAttentionHead, self).__init__()
+        self.E = E_proj
+        self.F = F_proj
+        self.dim = dim
+        self.dropout = nn.Dropout(dropout)
+        self.causal_mask = causal_mask
+
+    def forward(self, Q, K, V, mask):
+        """
+        Assume Q, K, V have same dtype
+        E, F are `nn.Linear` modules
+        """
+        
+        # project K using E
+        self.E = self.E.to(K.device)
+        #K = torch.matmul(K, self.E)
+        K = torch.matmul(self.E, K)
+        # calculate P = softmax(Q K.transpose/sqrt(k)
+        Q = torch.matmul(Q, K.transpose(1,2))
+        P_bar = Q/torch.sqrt(torch.tensor(self.dim).type(Q.type())).to(Q.device)
+        causal_mask = mask.to(Q.device)
+        min_value = float(numpy.finfo(torch.tensor(0, dtype=P_bar.dtype).numpy().dtype).min)
+        P_bar = P_bar.masked_fill_(causal_mask, min_value)
+        P_bar = P_bar.softmax(dim=-1)
+
+        P_bar = self.dropout(P_bar)
+        # project V using F
+        self.F = self.F.to(V.device)
+        V = torch.matmul(self.F, V)
+        # calculate PV
+#       print('P V', P_bar.shape, V.shape)
+        out_tensor = torch.matmul(P_bar, V)
+        return out_tensor
+
+
+def get_EFmatrix(input_size, dim_k, matrix=None):
+    """
+    Returns the E or F matrix, where E = δR and F = e^−δ R, R ∈  R^n×k 
+    with i.i.d. entries from N(0, 1/k), and δ is a constant with δ = 1/2^n
+    """
+    #delta = 1/(2** input_size)
+    delta = 1
+    proj_matrix = torch.zeros((dim_k, input_size))
+    torch.nn.init.normal_(proj_matrix, mean=0.0, std=1/dim_k)
+    if matrix=='E':
+        proj_matrix = delta * proj_matrix
+    if matrix=='F':
+        proj_matrix = math.exp(-delta) * proj_matrix
+    return proj_matrix
+
+
+class LinformerPadder(nn.Module):
+    """
+    A padder for the Linformer. Currently just pads the input to the Linformer's `input_size` parameter if it is smaller.
+    """
+    def __init__(self, attention_heads, attention_dim, dropout_rate):
+        super(LinformerPadder, self).__init__()
+        self.dim_k = 64
+        self.attn = MHLinformer(attention_heads, attention_dim, dropout_rate, self.dim_k)
+
+    def forward(self, tensor, _x, _y, mask):
+        batch_size, seq_len = tensor.shape[:2]
+        # pad the input tensor out to the max len so it matches the dimension of the linformer
+        padding_amount = self.attn.input_size - seq_len
+        ## create the overall dimensions with zeros
+        input_tensor = torch.zeros((batch_size, seq_len+padding_amount, tensor.shape[-1]), device=tensor.device)
+        input_mask = torch.zeros((batch_size, seq_len+padding_amount, self.dim_k), device=tensor.device)
+        ## then fill in the actual values for the first part
+        input_tensor[:,:seq_len] = tensor
+        if self.dim_k >= mask.shape[-1]:
+            input_mask[:,:seq_len, :mask.shape[-1]] = mask
+        else:
+            temp_mask = mask[:, :seq_len, :self.dim_k]
+            input_mask[:,:seq_len, :self.dim_k] = temp_mask
+        input_mask = input_mask.gt(False)
+        # run the forward pass
+        output_tensor = self.attn(input_tensor, input_mask)
+        # only return the actual values, not the padded ones
+        tensor = output_tensor[:,:seq_len]
+        return tensor
