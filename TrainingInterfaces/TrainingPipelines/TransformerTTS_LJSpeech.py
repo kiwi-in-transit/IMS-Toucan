@@ -50,11 +50,11 @@ def run(gpu_id, resume_checkpoint, finetune, model_dir):
                device=device,
                save_directory=save_dir,
                steps=300000,
-               batch_size=64,
+               batch_size=20,
                epochs_per_save=10,
                use_speaker_embedding=False,
                lang="en",
-               lr=0.001,
+               lr=0.00005,
                warmup_steps=8000,
                path_to_checkpoint=resume_checkpoint,
                fine_tune=finetune)

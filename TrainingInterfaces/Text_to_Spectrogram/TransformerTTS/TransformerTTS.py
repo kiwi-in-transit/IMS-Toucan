@@ -46,7 +46,7 @@ class Transformer(torch.nn.Module, ABC):
                  eprenet_conv_chans=0,
                  eprenet_conv_filts=0,
                  dprenet_layers=2,
-                 dprenet_units=256,
+                 dprenet_units=64, # changed from 256 to 64
                  elayers=6,
                  eunits=1024,
                  adim=512,
@@ -90,7 +90,7 @@ class Transformer(torch.nn.Module, ABC):
                  num_layers_applied_guided_attn=2,
                  modules_applied_guided_attn=("encoder-decoder",),
                  guided_attn_loss_sigma=0.4,  # standard deviation from diagonal that is allowed
-                 guided_attn_loss_lambda=25.0,  # forcing the attention to be diagonal
+                 guided_attn_loss_lambda=40.0,  # forcing the attention to be diagonal # changed from 25.0 to 40.0 to really force it
                  # additional features
                  legacy_model=False,
                  use_dtw_loss=False):

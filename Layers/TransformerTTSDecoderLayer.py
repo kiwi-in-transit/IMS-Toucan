@@ -70,11 +70,16 @@ class DecoderLayer(nn.Module):
         residual = tgt
         if self.normalize_before:
             tgt = self.norm1(tgt)
-
+        #print('tgt_mask shape, decoder layer forward function', tgt_mask.shape)
+        
+        # make cache always be None
+        cache = None
         if cache is None:
             tgt_q = tgt
             tgt_q_mask = tgt_mask
+            #print('cache is None')
         else:
+            print('cache is not None')
             # compute only the last frame query keeping dim: max_time_out -> 1
             assert cache.shape == (tgt.shape[0], tgt.shape[1] - 1, self.size,), f"{cache.shape} == {(tgt.shape[0], tgt.shape[1] - 1, self.size)}"
             tgt_q = tgt[:, -1:, :]
@@ -84,7 +89,11 @@ class DecoderLayer(nn.Module):
                 tgt_q_mask = tgt_mask[:, -1:, :]
 
         if self.concat_after:
-            tgt_concat = torch.cat((tgt_q, self.self_attn(tgt_q, tgt, tgt, tgt_q_mask)), dim=-1)
+            #print('decoderlayer, tgt_q shape:', tgt_q.shape)
+            attn_score = self.self_attn(tgt_q, tgt, tgt, tgt_q_mask)
+            #print('decoderlayer, attn_score shape:', attn_score.shape)
+            tgt_concat = torch.cat((tgt_q, attn_score), dim=-1)
+            #tgt_concat = torch.cat((tgt_q, self.self_attn(tgt_q, tgt, tgt, tgt_q_mask)), dim=-1)
             x = residual + self.concat_linear1(tgt_concat)
         else:
             x = residual + self.dropout(self.self_attn(tgt_q, tgt, tgt, tgt_q_mask))
