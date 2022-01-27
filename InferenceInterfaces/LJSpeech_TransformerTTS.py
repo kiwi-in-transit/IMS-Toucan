@@ -5,6 +5,7 @@ import sounddevice
 import soundfile
 import torch
 
+from InferenceInterfaces.InferenceArchitectures.InferenceHiFiGAN import HiFiGANGenerator
 from InferenceInterfaces.InferenceArchitectures.InferenceMelGAN import MelGANGenerator
 from InferenceInterfaces.InferenceArchitectures.InferenceTransformerTTS import Transformer
 from Preprocessing.TextFrontend import TextFrontend
@@ -19,12 +20,14 @@ class LJSpeech_TransformerTTSInference(torch.nn.Module):
         self.text2phone = TextFrontend(language="en", use_word_boundaries=False,
                                        use_explicit_eos=False, inference=True)
         try:
-            self.phone2mel = Transformer(path_to_weights=os.path.join("Models", "TransformerTTS_LJSpeech", "best.pt"),
+            self.phone2mel = Transformer(path_to_weights=os.path.join("Models", "TransformerTTS_LJSpeech_long_Lin_b9_k32_bcepos10", "best.pt"),
                                          idim=166, odim=80, spk_embed_dim=None, reduction_factor=1).to(torch.device(device))
         except RuntimeError:
-            self.phone2mel = Transformer(path_to_weights=os.path.join("Models", "TransformerTTS_LJSpeech", "best.pt"),
+            print("hit except loop")
+            self.phone2mel = Transformer(path_to_weights=os.path.join("Models", "TransformerTTS_LJSpeech_long_Lin_b9_k32_bcepos10", "best.pt"),
                                          idim=166, odim=80, spk_embed_dim=None, reduction_factor=1, legacy_model=True).to(torch.device(device))
-        self.mel2wav = MelGANGenerator(path_to_weights=os.path.join("Models", "MelGAN_LJSpeech", "best.pt")).to(torch.device(device))
+        #self.mel2wav = MelGANGenerator(path_to_weights=os.path.join("/home/users1/olssenaa/AdvancedML/SynthesisBaselineModels", "MelGAN_LJSpeech", "best.pt")).to(torch.device(device))
+        self.mel2wav = HiFiGANGenerator(path_to_weights=os.path.join("..", "hifigan_best.pt")).to(torch.device(device))
         self.phone2mel.eval()
         self.mel2wav.eval()
         self.to(torch.device(device))
@@ -33,7 +36,9 @@ class LJSpeech_TransformerTTSInference(torch.nn.Module):
         with torch.no_grad():
             phones = self.text2phone.string_to_tensor(text).squeeze(0).long().to(torch.device(self.device))
             mel = self.phone2mel(phones, speaker_embedding=self.speaker_embedding).transpose(0, 1)
-            wave = self.mel2wav(mel.unsqueeze(0)).squeeze(0).squeeze(0)
+            #wave = self.mel2wav(mel.unsqueeze(0)).squeeze(0).squeeze(0)
+            wave = self.mel2wav(mel).squeeze(0).squeeze(0)
+            print("wave output shape:", wave.shape)
         if view:
             import matplotlib.pyplot as plt
             import librosa.display as lbd
@@ -66,7 +71,8 @@ class LJSpeech_TransformerTTSInference(torch.nn.Module):
                 else:
                     wav = torch.cat((wav, self(text).cpu()), 0)
                     wav = torch.cat((wav, silence), 0)
-        soundfile.write(file=file_location, data=wav.cpu().numpy(), samplerate=16000)
+        #soundfile.write(file=file_location, data=wav.cpu().numpy(), samplerate=16000)
+        soundfile.write(file=file_location, data=wav.cpu().numpy(), samplerate=48000)
 
     def read_aloud(self, text, view=False, blocking=False):
         if text.strip() == "":
